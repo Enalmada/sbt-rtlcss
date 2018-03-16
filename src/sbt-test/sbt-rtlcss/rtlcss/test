@@ -1,0 +1,9 @@
+# Uglify files.
+
+> webStage
+$ exists target/web/stage/stylesheets/a.rtl.css
+
+-$ exists target/web/rtlcss/lib
+
+
+
