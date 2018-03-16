@@ -36,13 +36,6 @@ publishArtifact in Test := false
 pomIncludeRepository := { _ => false }
 
 pomExtra in Global := {
-  <url>https://github.com/Enalmada/sbt-rtlcss</url>
-    <licenses>
-      <license>
-        <name>Apache 2</name>
-        <url>http://www.apache.org/licenses/LICENSE-2.0.txt</url>
-      </license>
-    </licenses>
     <scm>
       <connection>git@github.com:Enalmada/sbt-rtlcss.git</connection>
       <developerConnection>git@github.com:Enalmada/sbt-rtlcss.git</developerConnection>
