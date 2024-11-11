@@ -1,19 +1,19 @@
 package com.github.enalmada.rtlcss
 
-import com.github.enalmada.proguard.Sbt10Compat.SbtIoPath._
 import com.typesafe.sbt.jse.{SbtJsEngine, SbtJsTask}
 import com.typesafe.sbt.web.incremental._
 import com.typesafe.sbt.web.pipeline.Pipeline
 import com.typesafe.sbt.web.{Compat, PathMapping, SbtWeb, incremental}
 import monix.reactive.Observable
 import sbt.Keys._
-import sbt.{Task, _}
+import sbt._
+import sbt.Path.relativeTo // Import this for relativeTo function
 
 import scala.concurrent.Await
+import scala.concurrent.duration._
 
 object Import {
-
-  val rtlcss = TaskKey[Pipeline.Stage]("rtlcss", "Perform rtlcss optimization on the asset pipeline.")
+  val rtlcss = taskKey[Pipeline.Stage]("Perform rtlcss optimization on the asset pipeline.")
 
   val rtlcssBuildDir = settingKey[File]("Where rtlcss will copy source files and write minified files to. Default: resourceManaged / build")
   val rtlcssComments = settingKey[Option[String]]("Specifies comments handling. Default: None")
@@ -26,10 +26,9 @@ object Import {
   val rtlcssMangleOptions = settingKey[Seq[String]]("Options for mangling such as sort, topLevel etc. Default: Nil")
   val rtlcssPreamble = settingKey[Option[String]]("Any preamble to include at the start of the output. Default: None")
   val rtlcssReserved = settingKey[Seq[String]]("Reserved names to exclude from mangling. Default: Nil")
-  val rtlcssOps = settingKey[RtlcssOps.RtlcssOpsMethod]("A function defining how to combine input files into output files. Default: UglifyOps.singleFileWithSourceMapOut")
+  val rtlcssOps = settingKey[RtlcssOps.RtlcssOpsMethod]("A function defining how to combine input files into output files. Default: singleFileWithSourceMapOut")
 
   object RtlcssOps {
-
     /** A list of input files mapping to a single output file. */
     case class RtlcssOpGrouping(inputFiles: Seq[PathMapping], outputFile: String, inputMapFile: Option[PathMapping], outputMapFile: Option[String])
 
@@ -51,17 +50,13 @@ object Import {
       mappings.map(fp => RtlcssOpGrouping(Seq(fp), dotRtl(fp._2), None, Some(dotRtl(fp._2) + ".map")))
     }
   }
-
 }
 
 object SbtRtlcss extends AutoPlugin {
-
   override def requires = SbtJsTask
-
   override def trigger = AllRequirements
 
   val autoImport = Import
-
   import SbtJsEngine.autoImport.JsEngineKeys._
   import SbtJsTask.autoImport.JsTaskKeys._
   import SbtWeb.autoImport._
@@ -74,37 +69,34 @@ object SbtRtlcss extends AutoPlugin {
   }
 
   override def projectSettings = Seq(
-    rtlcssBuildDir := (resourceManaged in rtlcss).value / "build",
+    rtlcssBuildDir := resourceManaged.value / "build",
     rtlcssComments := None,
     rtlcssCompress := true,
     rtlcssCompressOptions := Nil,
     rtlcssDefine := None,
     rtlcssEnclose := false,
-    excludeFilter in rtlcss :=
-      HiddenFileFilter ||
-        GlobFilter("*.rtl.css") ||
-        new SimpleFileFilter({ file =>
-          file.startsWith((WebKeys.webModuleDirectory in Assets).value)
-        }),
-    includeFilter in rtlcss := GlobFilter("*.css"),
+    excludeFilter := HiddenFileFilter || GlobFilter("*.rtl.css") || new SimpleFileFilter({ file =>
+      file.startsWith((webModuleDirectory.value / "assets"))
+    }),
+    includeFilter := GlobFilter("*.css"),
     rtlcssIncludeSource := false,
-    resourceManaged in rtlcss := webTarget.value / rtlcss.key.label,
+    resourceManaged := webTarget.value / rtlcss.key.label,
     rtlcssMangle := true,
     rtlcssMangleOptions := Nil,
     rtlcssPreamble := None,
     rtlcssReserved := Nil,
-    rtlcss := runOptimizer.dependsOn(webJarsNodeModules in Plugin).value,
+    rtlcss := runOptimizer.dependsOn(webJarsNodeModules).value,
     rtlcssOps := singleFileWithSourceMapOut
   )
 
   private def runOptimizer: Def.Initialize[Task[Pipeline.Stage]] = Def.task {
-    val include = (includeFilter in rtlcss).value
-    val exclude = (excludeFilter in rtlcss).value
+    val include = includeFilter.value
+    val exclude = excludeFilter.value
     val buildDirValue = rtlcssBuildDir.value
     val rtlcssOpsValue = rtlcssOps.value
     val streamsValue = streams.value
-    val nodeModuleDirectoriesInPluginValue = (nodeModuleDirectories in Plugin).value
-    val webJarsNodeModulesDirectoryInPluginValue = (webJarsNodeModulesDirectory in Plugin).value
+    val nodeModuleDirectoriesValue = nodeModuleDirectories.value
+    val webJarsNodeModulesDirectoryValue = webJarsNodeModulesDirectory.value
     val mangleValue = rtlcssMangle.value
     val mangleOptionsValue = rtlcssMangleOptions.value
     val reservedValue = rtlcssReserved.value
@@ -112,19 +104,19 @@ object SbtRtlcss extends AutoPlugin {
     val compressOptionsValue = rtlcssCompressOptions.value
     val encloseValue = rtlcssEnclose.value
     val includeSourceValue = rtlcssIncludeSource.value
-    val timeout = (timeoutPerSource in rtlcss).value
+    val timeout: FiniteDuration = 30.seconds
     val stateValue = state.value
-    val engineTypeInUglifyValue = (engineType in rtlcss).value
-    val commandInUglifyValue = (command in rtlcss).value
+    val engineTypeValue = engineType.value
+    val commandValue = command.value
     val options = Seq(
       rtlcssComments.value,
       compressValue,
       compressOptionsValue,
       rtlcssDefine.value,
       encloseValue,
-      (excludeFilter in rtlcss).value,
-      (includeFilter in rtlcss).value,
-      (resourceManaged in rtlcss).value,
+      excludeFilter.value,
+      includeFilter.value,
+      resourceManaged.value,
       mangleValue,
       mangleOptionsValue,
       rtlcssPreamble.value,
@@ -132,11 +124,11 @@ object SbtRtlcss extends AutoPlugin {
       includeSourceValue
     ).mkString("|")
 
-    (mappings) => {
+    (mappings: Seq[PathMapping]) => {
       val optimizerMappings = mappings.filter(f => !f._1.isDirectory && include.accept(f._1) && !exclude.accept(f._1))
 
       SbtWeb.syncMappings(
-        Compat.cacheStore(streamsValue, "rtlcss-cache"),
+        streamsValue.cacheStoreFactory.make("rtlcss-cache"),
         optimizerMappings,
         buildDirValue
       )
@@ -155,18 +147,17 @@ object SbtRtlcss extends AutoPlugin {
 
             streamsValue.log.info(s"Optimizing ${modifiedGroupings.size} Stylesheet(s) with rtlcss")
 
-            val nodeModulePaths = nodeModuleDirectoriesInPluginValue.map(_.getPath)
-            val rtlcssjsShell = webJarsNodeModulesDirectoryInPluginValue / "rtlcss" / "bin" / "rtlcss"
+            val nodeModulePaths = nodeModuleDirectoriesValue.map(_.getPath)
+            val rtlcssjsShell = webJarsNodeModulesDirectoryValue / "rtlcss" / "bin" / "rtlcss"
 
             def executeRtlcss(args: Seq[String]) = monix.eval.Task {
               SbtJsTask.executeJs(
                 stateValue.copy(),
-                engineTypeInUglifyValue,
-                commandInUglifyValue,
+                engineTypeValue,
+                commandValue,
                 nodeModulePaths,
                 rtlcssjsShell,
-                args: Seq[String],
-                timeout
+                args
               )
             }
 
@@ -180,11 +171,9 @@ object SbtRtlcss extends AutoPlugin {
 
               val outputFile = buildDirValue / grouping.outputFile
               IO.createDirectory(outputFile.getParentFile)
-              val outputFileArgs = Seq(outputFile.getPath)
+              val outputFileArgs = Seq("--output", outputFile.getPath)
 
-              val args =
-              // Seq("--config", ".rtlcssrc") ++
-                inputFileArgs ++ outputFileArgs
+              val args = inputFileArgs ++ outputFileArgs
 
               executeRtlcss(args).map { result =>
                 val success = result.headOption.fold(true)(_ => false)
@@ -203,7 +192,7 @@ object SbtRtlcss extends AutoPlugin {
               parallelism = java.lang.Runtime.getRuntime.availableProcessors
             )
             val result = Await.result(
-              resultObservable.toListL.runAsync(rtlcssPool),
+              resultObservable.toListL.runToFuture(rtlcssPool),
               timeout * modifiedGroupings.size
             )
 
